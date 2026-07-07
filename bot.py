@@ -336,30 +336,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     chat_type = update.effective_chat.type
     
-    if chat_type in ["group", "supergroup"]:
+    # ✅ FIX: Added "channel" support
+    if chat_type in ["group", "supergroup", "channel"]:
         db.add_group(chat_id)
         
         welcome = f"""🤖 <b>News Bot Activated!</b>
 
-✅ This group is now registered for news updates!
+✅ This {'channel' if chat_type == 'channel' else 'group'} is now registered for news updates!
 
 📰 <b>Categories:</b> Tech, Crypto, Sports, World
 📤 <b>Posts:</b> 5 articles per hour
 {"🤖 <b>Gemini AI:</b> Enabled (better summaries)" if USE_GEMINI else ""}
 
 <b>Commands:</b>
-/start - Register this group
+/start - Register this {'channel' if chat_type == 'channel' else 'group'}
 /categories - Show/change categories
-/stop - Stop news in this group
+/stop - Stop news in this {'channel' if chat_type == 'channel' else 'group'}
 /help - Show this message
 
 📰 First news will arrive in 10 minutes!"""
         
         await update.message.reply_text(welcome, parse_mode='HTML')
-        logger.info(f"✅ Group {chat_id} registered successfully!")
+        logger.info(f"✅ {chat_type.capitalize()} {chat_id} registered successfully!")
     else:
         await update.message.reply_text(
-            "🤖 Please add me to a group to start receiving news!",
+            "🤖 Please add me to a group or channel to start receiving news!",
             parse_mode='HTML'
         )
 
@@ -377,7 +378,6 @@ async def categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_categories = DEFAULT_CATEGORIES
     
     category_list = "\n".join([f"• {cat.capitalize()}" for cat in current_categories])
-    all_categories = "\n".join([f"• {cat.capitalize()}" for cat in SOURCES.keys() if cat.endswith(('',))][:10])
     
     await update.message.reply_text(
         f"""📰 <b>Current Categories:</b>
@@ -443,7 +443,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.remove_group(chat_id)
     
     await update.message.reply_text(
-        "🛑 <b>News Stopped!</b>\n\nThis group will no longer receive news updates.\n\nTo restart, use /start",
+        "🛑 <b>News Stopped!</b>\n\nThis group/channel will no longer receive news updates.\n\nTo restart, use /start",
         parse_mode='HTML'
     )
     logger.info(f"🛑 Group {chat_id} stopped receiving news")
@@ -453,10 +453,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """🤖 <b>News Bot Help</b>
 
 <b>Commands:</b>
-/start - Register this group for news
+/start - Register this group/channel for news
 /categories - Show current categories
 /categories tech,crypto - Change categories (comma-separated)
-/stop - Stop news in this group
+/stop - Stop news in this group/channel
 /help - Show this message
 
 <b>Available Categories:</b>
@@ -468,10 +468,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 <b>Features:</b>
 • Posts 5 articles per hour
 • {"🤖 AI-powered summaries (Gemini)" if USE_GEMINI else "RSS feed news"}
-• Auto-detects groups
-• Works for multiple groups simultaneously
+• Auto-detects groups AND channels
+• Works for multiple groups/channels simultaneously
 
-<b>Add this bot to any group!</b>
+<b>Add this bot to any group or channel!</b>
 Simply add me and use /start""",
         parse_mode='HTML'
     )
@@ -529,7 +529,7 @@ async def main():
     logger.info("🚀 Multi-Group News Bot Started Successfully!")
     logger.info(f"📡 Monitoring {len(SOURCES)} sources")
     logger.info(f"📤 Will post {POSTS_PER_HOUR} articles per hour")
-    logger.info(f"👥 Active groups: {len(groups)}")
+    logger.info(f"👥 Active groups/channels: {len(groups)}")
     logger.info(f"🧠 Gemini AI: {'ENABLED' if USE_GEMINI else 'DISABLED'}")
     logger.info("🔄 Bot is running...")
     
