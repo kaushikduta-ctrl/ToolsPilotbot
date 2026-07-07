@@ -65,7 +65,6 @@ class Database:
             return False
     
     def cleanup_old(self):
-        """Remove old records to keep database small"""
         try:
             self.cursor.execute("DELETE FROM posted WHERE time < datetime('now', '-7 days')")
             self.conn.commit()
@@ -216,6 +215,20 @@ async def main():
         logger.error("❌ Bot failed health check. Exiting...")
         return
     
+    # ====== SEND TEST MESSAGE ON STARTUP ======
+    try:
+        await bot.send_message(
+            chat_id=CHAT_ID,
+            text="🤖 <b>BOT IS ONLINE!</b>\n\n✅ Connected to this group successfully!\n\n📰 News will start arriving in 10 minutes.",
+            parse_mode='HTML'
+        )
+        logger.info("✅ TEST MESSAGE SENT SUCCESSFULLY!")
+    except Exception as e:
+        logger.error(f"❌ TEST MESSAGE FAILED: {e}")
+        logger.error(f"❌ Check CHAT_ID: {CHAT_ID}")
+        logger.error(f"❌ Make sure bot is admin in the group")
+    # =========================================
+    
     logger.info("🚀 News Bot Started Successfully!")
     logger.info(f"📡 Monitoring {len(SOURCES)} sources")
     logger.info(f"📤 Will post {POSTS_PER_HOUR} articles per hour")
@@ -256,14 +269,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"💀 Fatal error: {e}")
         exit(1)
-# Add this right after "logger.info('🔄 Bot is running...')" in main():
-
-try:
-    await bot.send_message(
-        chat_id=CHAT_ID,
-        text="✅ Bot is working! First post coming soon...",
-        parse_mode='HTML'
-    )
-    logger.info("✅ Test message sent to group!")
-except Exception as e:
-    logger.error(f"❌ Could not send test: {e}")
