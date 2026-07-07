@@ -256,3 +256,14 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(f"💀 Fatal error: {e}")
         exit(1)
+# Add this right after "logger.info('🔄 Bot is running...')" in main():
+
+try:
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text="✅ Bot is working! First post coming soon...",
+        parse_mode='HTML'
+    )
+    logger.info("✅ Test message sent to group!")
+except Exception as e:
+    logger.error(f"❌ Could not send test: {e}")
