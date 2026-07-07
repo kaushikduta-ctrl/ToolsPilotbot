@@ -24,6 +24,7 @@ if not TOKEN or not CHAT_ID:
     logger.error("❌ Missing environment variables!")
     exit(1)
 
+# Updated sources with better RSS feeds
 SOURCES = [
     "http://rss.cnn.com/rss/cnn_topstories.rss",
     "https://feeds.bbci.co.uk/news/rss.xml",
@@ -34,7 +35,7 @@ SOURCES = [
 
 POSTS_PER_HOUR = 5
 CHECK_INTERVAL = 600  # 10 minutes
-MAX_RETRIES = 5
+MAX_RETRIES = 3
 
 # ============ DATABASE ============
 class Database:
@@ -74,19 +75,38 @@ class Database:
 db = Database()
 
 # ============ FETCH NEWS ============
-async def fetch_feed(url, retry_count=0):
+def fetch_feed_sync(url, retry_count=0):
+    """Synchronous feed fetch with proper headers"""
     try:
-        feed = feedparser.parse(url)
+        # Add headers to mimic a real browser
+        feed = feedparser.parse(url, 
+            agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+        
+        # Check for feed errors
+        if feed.bozo and 'bozo_exception' in feed:
+            logger.warning(f"Feed parsing warning for {url}: {feed.bozo_exception}")
+        
         if feed.entries:
             return feed
         else:
+            # Try alternative Reddit feed format
+            if "reddit.com" in url:
+                # Reddit RSS sometimes needs the .rss?format=json parameter
+                alt_url = url.replace(".rss", ".rss?format=json")
+                feed = feedparser.parse(alt_url)
+                if feed.entries:
+                    return feed
+            
+            # If still no entries, raise exception to trigger retry
             raise Exception("No entries found")
+            
     except Exception as e:
         if retry_count < MAX_RETRIES:
             wait = (2 ** retry_count) + random.random()
             logger.warning(f"Retry {retry_count+1} for {url} in {wait:.1f}s")
-            await asyncio.sleep(wait)
-            return await fetch_feed(url, retry_count + 1)
+            time.sleep(wait)
+            return fetch_feed_sync(url, retry_count + 1)
         else:
             logger.error(f"Failed to fetch {url}: {e}")
             return None
@@ -96,12 +116,12 @@ def get_news():
     
     for url in SOURCES:
         try:
-            feed = asyncio.run_coroutine_threadsafe(fetch_feed(url), asyncio.get_event_loop())
-            feed = feed.result(timeout=30)
+            feed = fetch_feed_sync(url)
             
-            if not feed:
+            if not feed or not feed.entries:
                 continue
                 
+            # Get up to 3 entries per source
             for entry in feed.entries[:3]:
                 link = entry.get('link', '').strip()
                 if not link or db.is_posted(link):
@@ -109,8 +129,10 @@ def get_news():
                 
                 title = entry.get('title', 'No Title').strip()
                 summary = entry.get('summary', '')
+                # Clean HTML from summary
                 summary = re.sub(r'<[^>]+>', '', summary)[:200] + "..."
                 
+                # Detect category
                 category = "Tech"
                 if "crypto" in url.lower():
                     category = "Crypto"
@@ -129,6 +151,7 @@ def get_news():
             logger.error(f"Error processing {url}: {e}")
             continue
     
+    # Return up to POSTS_PER_HOUR articles
     return articles[:POSTS_PER_HOUR]
 
 # ============ FORMAT MESSAGE ============
@@ -215,7 +238,7 @@ async def main():
         logger.error("❌ Bot failed health check. Exiting...")
         return
     
-    # ====== SEND TEST MESSAGE ON STARTUP ======
+    # Test message on startup
     try:
         await bot.send_message(
             chat_id=CHAT_ID,
@@ -225,9 +248,6 @@ async def main():
         logger.info("✅ TEST MESSAGE SENT SUCCESSFULLY!")
     except Exception as e:
         logger.error(f"❌ TEST MESSAGE FAILED: {e}")
-        logger.error(f"❌ Check CHAT_ID: {CHAT_ID}")
-        logger.error(f"❌ Make sure bot is admin in the group")
-    # =========================================
     
     logger.info("🚀 News Bot Started Successfully!")
     logger.info(f"📡 Monitoring {len(SOURCES)} sources")
@@ -262,6 +282,8 @@ async def main():
 
 # ============ ENTRY POINT ============
 if __name__ == "__main__":
+    # Import time here for the sync fetch function
+    import time
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
