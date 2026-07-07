@@ -30,19 +30,39 @@ if not TOKEN:
 # Configure Gemini if API key is provided
 USE_GEMINI = GEMINI_API_KEY is not None
 if USE_GEMINI:
-    genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-    logger.info("✅ Gemini API configured!")
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        # Use gemini-pro (more reliable than gemini-1.5-flash)
+        gemini_model = genai.GenerativeModel('gemini-pro')
+        logger.info("✅ Gemini API configured with gemini-pro!")
+    except Exception as e:
+        logger.error(f"❌ Gemini setup failed: {e}")
+        USE_GEMINI = False
 
+# ============ RELIABLE NEWS SOURCES (No Reddit) ============
 SOURCES = {
-    "tech": "https://www.reddit.com/r/technology/.rss",
-    "crypto": "https://www.reddit.com/r/CryptoCurrency/.rss",
-    "sports": "https://www.reddit.com/r/sports/.rss",
-    "world": "http://rss.cnn.com/rss/cnn_topstories.rss",
-    "bbc": "https://feeds.bbci.co.uk/news/rss.xml"
+    # Tech
+    "tech": "https://techcrunch.com/feed/",
+    "tech2": "https://www.wired.com/feed/rss",
+    "tech3": "https://arstechnica.com/feed/",
+    
+    # Crypto
+    "crypto": "https://cointelegraph.com/rss",
+    "crypto2": "https://coindesk.com/feed/",
+    "crypto3": "https://decrypt.co/feed",
+    
+    # Sports
+    "sports": "https://www.espn.com/espn/rss/news",
+    "sports2": "https://sports.yahoo.com/rss/",
+    "sports3": "https://www.si.com/rss/si_topstories.rss",
+    
+    # World News
+    "world": "http://feeds.bbci.co.uk/news/world/rss.xml",
+    "world2": "https://apnews.com/rss",
+    "world3": "https://feeds.npr.org/1001/rss.xml"
 }
 
-DEFAULT_CATEGORIES = ["tech", "crypto", "sports", "world", "bbc"]
+DEFAULT_CATEGORIES = ["tech", "crypto", "sports", "world"]
 POSTS_PER_HOUR = 5
 CHECK_INTERVAL = 600  # 10 minutes
 MAX_RETRIES = 3
@@ -149,12 +169,6 @@ def fetch_feed_sync(url, retry_count=0):
         if feed.entries:
             return feed
         else:
-            if "reddit.com" in url:
-                alt_url = url.replace(".rss", ".rss?format=json")
-                feed = feedparser.parse(alt_url)
-                if feed.entries:
-                    return feed
-            
             raise Exception("No entries found")
     except Exception as e:
         if retry_count < MAX_RETRIES:
@@ -233,7 +247,7 @@ Make it engaging and highlight the key point. Return ONLY the summary, nothing e
 
 # ============ FORMAT MESSAGE ============
 async def format_post_with_gemini(article):
-    emojis = {"Tech": "💻", "Crypto": "🪙", "Sports": "⚽", "World": "🌍", "Bbc": "📰", "General": "📰"}
+    emojis = {"Tech": "💻", "Crypto": "🪙", "Sports": "⚽", "World": "🌍", "General": "📰"}
     emoji = emojis.get(article['category'], "📰")
     
     final_summary = article['summary']
@@ -260,8 +274,7 @@ async def send_telegram_message(bot, chat_id, message, retry_count=0):
             chat_id=chat_id,
             text=message,
             parse_mode='HTML',
-            disable_web_page_preview=False,
-            timeout=30
+            disable_web_page_preview=False
         )
         return True
     except RetryAfter as e:
@@ -330,7 +343,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 ✅ This group is now registered for news updates!
 
-📰 <b>Categories:</b> Tech, Crypto, Sports, World, BBC
+📰 <b>Categories:</b> Tech, Crypto, Sports, World
 📤 <b>Posts:</b> 5 articles per hour
 {"🤖 <b>Gemini AI:</b> Enabled (better summaries)" if USE_GEMINI else ""}
 
@@ -364,14 +377,17 @@ async def categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_categories = DEFAULT_CATEGORIES
     
     category_list = "\n".join([f"• {cat.capitalize()}" for cat in current_categories])
-    all_categories = "\n".join([f"• {cat.capitalize()}" for cat in SOURCES.keys()])
+    all_categories = "\n".join([f"• {cat.capitalize()}" for cat in SOURCES.keys() if cat.endswith(('',))][:10])
     
     await update.message.reply_text(
         f"""📰 <b>Current Categories:</b>
 {category_list}
 
 <b>Available Categories:</b>
-{all_categories}
+• Tech
+• Crypto
+• Sports
+• World
 
 <b>Usage:</b>
 To change categories, use:
@@ -395,12 +411,12 @@ async def set_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     categories_str = args[0]
     new_categories = [cat.strip().lower() for cat in categories_str.split(",")]
     
-    valid_categories = [cat for cat in new_categories if cat in SOURCES]
-    invalid_categories = [cat for cat in new_categories if cat not in SOURCES]
+    valid_categories = [cat for cat in new_categories if cat in ["tech", "crypto", "sports", "world"]]
+    invalid_categories = [cat for cat in new_categories if cat not in ["tech", "crypto", "sports", "world"]]
     
     if not valid_categories:
         await update.message.reply_text(
-            f"❌ No valid categories found. Available: {', '.join(SOURCES.keys())}",
+            "❌ No valid categories found. Available: tech, crypto, sports, world",
             parse_mode='HTML'
         )
         return
@@ -447,8 +463,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Tech - Technology news
 • Crypto - Cryptocurrency news
 • Sports - Sports news
-• World - World news (CNN)
-• BBC - BBC News
+• World - World news (BBC, AP, NPR)
 
 <b>Features:</b>
 • Posts 5 articles per hour
@@ -479,13 +494,11 @@ async def main():
     
     # Start polling with proper error handling
     try:
-        # Delete webhook to ensure clean start
         await application.bot.delete_webhook()
         logger.info("✅ Webhook deleted")
     except Exception as e:
         logger.warning(f"Could not delete webhook: {e}")
     
-    # Start polling with a shorter timeout to prevent conflicts
     await application.updater.start_polling(timeout=30, read_timeout=30)
     
     bot = application.bot
@@ -514,7 +527,7 @@ async def main():
                 db.remove_group(group['chat_id'])
     
     logger.info("🚀 Multi-Group News Bot Started Successfully!")
-    logger.info(f"📡 Monitoring {len(SOURCES)} categories")
+    logger.info(f"📡 Monitoring {len(SOURCES)} sources")
     logger.info(f"📤 Will post {POSTS_PER_HOUR} articles per hour")
     logger.info(f"👥 Active groups: {len(groups)}")
     logger.info(f"🧠 Gemini AI: {'ENABLED' if USE_GEMINI else 'DISABLED'}")
