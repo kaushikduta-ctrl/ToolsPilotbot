@@ -8,7 +8,7 @@ import os
 import logging
 from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, ContextTypes
-from telegram.error import TelegramError, TimedOut, RetryAfter
+from telegram.error import TelegramError, TimedOut, RetryAfter, Conflict
 import google.generativeai as genai
 import time
 
@@ -55,11 +55,8 @@ class Database:
         self._init_tables()
     
     def _init_tables(self):
-        # Track posted articles globally
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS posted 
                  (link TEXT PRIMARY KEY, time TIMESTAMP)''')
-        
-        # Track which groups the bot is in and their preferences
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS groups 
                  (chat_id TEXT PRIMARY KEY, 
                   categories TEXT, 
@@ -170,7 +167,6 @@ def fetch_feed_sync(url, retry_count=0):
             return None
 
 def get_news_for_categories(categories):
-    """Fetch news only for specific categories"""
     articles = []
     
     for category in categories:
@@ -285,19 +281,16 @@ async def send_telegram_message(bot, chat_id, message, retry_count=0):
 # ============ POST NEWS ============
 async def post_news(bot):
     try:
-        # Get all active groups
         groups = db.get_all_groups()
         
         if not groups:
             logger.info("No active groups found")
             return
         
-        # For each group, get news for their categories
         for group in groups:
             chat_id = group['chat_id']
             categories = group['categories']
             
-            # Get news for this group's categories
             articles = get_news_for_categories(categories)
             
             if not articles:
@@ -306,7 +299,6 @@ async def post_news(bot):
             
             logger.info(f"Found {len(articles)} new articles for group {chat_id}")
             
-            # Post each article
             for article in articles:
                 message = await format_post_with_gemini(article)
                 success = await send_telegram_message(bot, chat_id, message)
@@ -314,11 +306,10 @@ async def post_news(bot):
                 if success:
                     db.mark_posted(article['link'])
                     logger.info(f"✅ Posted to {chat_id}: {article['title'][:50]}...")
-                    await asyncio.sleep(3)  # Small delay between posts
+                    await asyncio.sleep(3)
                 else:
                     logger.error(f"❌ Failed to post to {chat_id}")
             
-            # Update last post time
             db.update_last_post(chat_id)
                 
         if random.random() < 0.01:
@@ -329,16 +320,12 @@ async def post_news(bot):
 
 # ============ BOT COMMANDS ============
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command - auto-register group"""
     chat_id = update.effective_chat.id
     chat_type = update.effective_chat.type
     
-    # Only work in groups or supergroups
     if chat_type in ["group", "supergroup"]:
-        # Add group to database
         db.add_group(chat_id)
         
-        # Send welcome message
         welcome = f"""🤖 <b>News Bot Activated!</b>
 
 ✅ This group is now registered for news updates!
@@ -364,10 +351,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show and manage categories"""
     chat_id = update.effective_chat.id
     
-    # Get current categories
     groups = db.get_all_groups()
     current_categories = []
     for group in groups:
@@ -378,7 +363,6 @@ async def categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not current_categories:
         current_categories = DEFAULT_CATEGORIES
     
-    # Build message
     category_list = "\n".join([f"• {cat.capitalize()}" for cat in current_categories])
     all_categories = "\n".join([f"• {cat.capitalize()}" for cat in SOURCES.keys()])
     
@@ -398,10 +382,8 @@ To change categories, use:
     )
 
 async def set_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set categories for a group"""
     chat_id = update.effective_chat.id
     
-    # Get categories from command
     args = context.args
     if not args:
         await update.message.reply_text(
@@ -410,11 +392,9 @@ async def set_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Parse categories
     categories_str = args[0]
     new_categories = [cat.strip().lower() for cat in categories_str.split(",")]
     
-    # Validate categories
     valid_categories = [cat for cat in new_categories if cat in SOURCES]
     invalid_categories = [cat for cat in new_categories if cat not in SOURCES]
     
@@ -425,10 +405,8 @@ async def set_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Update group preferences
     db.add_group(chat_id, valid_categories)
     
-    # Confirm
     category_list = "\n".join([f"• {cat.capitalize()}" for cat in valid_categories])
     await update.message.reply_text(
         f"""✅ <b>Categories Updated!</b>
@@ -444,7 +422,6 @@ News will now include only these categories!""",
     logger.info(f"✅ Group {chat_id} updated categories: {valid_categories}")
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Stop news in a group"""
     chat_id = update.effective_chat.id
     
     db.remove_group(chat_id)
@@ -456,7 +433,6 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"🛑 Group {chat_id} stopped receiving news")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show help message"""
     await update.message.reply_text(
         """🤖 <b>News Bot Help</b>
 
@@ -485,24 +461,33 @@ Simply add me and use /start""",
         parse_mode='HTML'
     )
 
-# ============ APPLICATION SETUP ============
-def setup_bot():
-    """Set up the bot with all handlers"""
+# ============ MAIN FUNCTION ============
+async def main():
+    # Create application
     application = Application.builder().token(TOKEN).build()
     
-    # Add command handlers
+    # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("categories", categories))
     application.add_handler(CommandHandler("stop", stop))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("setcategories", set_categories))
     
-    return application
-
-# ============ MAIN LOOP ============
-async def main():
-    # Set up bot
-    application = setup_bot()
+    # Initialize
+    await application.initialize()
+    await application.start()
+    
+    # Start polling with proper error handling
+    try:
+        # Delete webhook to ensure clean start
+        await application.bot.delete_webhook()
+        logger.info("✅ Webhook deleted")
+    except Exception as e:
+        logger.warning(f"Could not delete webhook: {e}")
+    
+    # Start polling with a shorter timeout to prevent conflicts
+    await application.updater.start_polling(timeout=30, read_timeout=30)
+    
     bot = application.bot
     
     # Health check
@@ -513,11 +498,7 @@ async def main():
         logger.error(f"❌ Health check failed: {e}")
         return
     
-    # Start the bot (for commands)
-    await application.initialize()
-    await application.start()
-    
-    # Send test message to all registered groups
+    # Send restart notifications
     groups = db.get_all_groups()
     for group in groups:
         try:
@@ -529,20 +510,15 @@ async def main():
             logger.info(f"✅ Restart notification sent to {group['chat_id']}")
         except Exception as e:
             logger.warning(f"Could not send restart notification to {group['chat_id']}: {e}")
-            # Remove inactive groups
             if "chat not found" in str(e).lower():
                 db.remove_group(group['chat_id'])
     
-    # Log startup
     logger.info("🚀 Multi-Group News Bot Started Successfully!")
     logger.info(f"📡 Monitoring {len(SOURCES)} categories")
     logger.info(f"📤 Will post {POSTS_PER_HOUR} articles per hour")
     logger.info(f"👥 Active groups: {len(groups)}")
     logger.info(f"🧠 Gemini AI: {'ENABLED' if USE_GEMINI else 'DISABLED'}")
     logger.info("🔄 Bot is running...")
-    
-    # Start the polling for commands
-    await application.updater.start_polling()
     
     # Main news posting loop
     consecutive_failures = 0
